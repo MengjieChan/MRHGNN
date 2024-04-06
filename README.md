@@ -76,7 +76,7 @@ Output: train data $D_{train}$, validation data $D_{valid}$, test data $D_{test}
 ---
 - We utilize the train data $D_{train}$ to construct the drug combination hypergraph.
 - After conducting message passing and aggregation on the drug combination hypergraph $\mathcal{G}_1$ and interaction hypergraph $\mathcal{G}_2$ using RHGNN, we acquired the final embedding $z^*$ of the drug.
-- For the training set $D_{train}$, we compute the predicted value $p_{ij}^c$ for each quadruplet $(drug\ i, drug\ j, cell\ line\ c, label\ l)$, then calculate the loss function $\mathcal{L}_ {p}$ to facilitate gradient backpropagation for updating the model parameters. However, for the validation $D_{valid}$ and test $D_{test}$ sets, we solely compute the predicted values $p_{ij}^c$ without calculating the loss function $\mathcal{L}_p$ for gradient backpropagation.
+- For the training set $D_{train}$, we compute the predicted value $p_{ij}^c$ for each quadruplet $(drug\ i, drug\ j, cell\ line\ c, label\ l)$, then calculate the loss function $\mathcal{L}_ {p}$ to facilitate gradient backpropagation for updating the model parameters. However, for the validation set $D_{valid}$ and test set $D_{test}$, we solely compute the predicted values $p_{ij}^c$ without calculating the loss function $\mathcal{L}_p$ for gradient backpropagation.
 
 ## Citation
 
