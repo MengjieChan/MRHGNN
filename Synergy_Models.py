@@ -13,7 +13,7 @@ import Config
 import math
 import scipy.sparse as sp
 from torch_scatter import scatter
-from torch_geometric.utils import softmax
+# from torch_geometric.utils import softmax
 import random
 
 args = Config.parse()
@@ -170,7 +170,7 @@ class ChannelAttention(nn.Module):
                      
         score = F.softmax(torch.stack(weights, dim=1), dim=1)
         mixed_embeddings = torch.zeros_like(channel_embeddings[0])
-
+        
         for i in range(len(weights)):
             mixed_embeddings += (score[:, i]*channel_embeddings[i].t()).t()
 
@@ -221,7 +221,7 @@ class BilinearDecoder(nn.Module):
 
 
 class Synergy(nn.Module):
-    def __init__(self, numDrug, BioEncoder, encoder1, encoder2, attention, decoder): # 
+    def __init__(self, numDrug, BioEncoder, encoder1, encoder2, attention, decoder):
         super(Synergy, self).__init__()
         self.BioEncoder = BioEncoder
         self.hgnn_encoder1 = encoder1

@@ -13,8 +13,6 @@ from rdkit import Chem
 from rdkit.Chem import MACCSkeys
 from rdkit.Chem import AllChem, Descriptors
 import random
-import multiprocessing
-from multiprocessing import Process, Queue, Value, Manager
 import time
 import torch
 import torch_sparse
@@ -69,119 +67,104 @@ def Construct_Hypergraph(hyperedge1, hyperedge2, node_num):
 
 
 
-def producer(queue, datum, event):
-    for data in datum:
-        Interaction_Score, numDrug, numCellline, iFold = data
-        train_edges = {}
-        train_labels = {}
-        test_edges = {}
-        test_labels = {}
-        valid_edges = {}
-        valid_labels = {}
-        pos_weights = {}
+def produce(data):
+
+    Interaction_Score, numDrug, numCellline, iFold = data
+    train_edges = {}
+    train_labels = {}
+    test_edges = {}
+    test_labels = {}
+    valid_edges = {}
+    valid_labels = {}
+    pos_weights = {}
+    
+    Synergistic_Graph = []
+    Antagonistic_Graph = []
+    
+    Cell_Line_Specific = Interaction_Score.groupby('CellLine')
+    
+    for Cell_Line, Interaction in Cell_Line_Specific:
+        for idx, (a, b) in Interaction[['DrugA', 'DrugB']].iterrows():
+            Interaction.at[idx, 'DrugA'], Interaction.at[idx, 'DrugB'] = sorted([a, b])
+        Positive_Interaction = Interaction[Interaction.iloc[:,3] >= params.threshold]
+        Negitive_Interaction = Interaction[Interaction.iloc[:,3] < 0]
         
-        Synergistic_Graph = []
-        Antagonistic_Graph = []
         
-        Cell_Line_Specific = Interaction_Score.groupby('CellLine')
+        Positive_Interaction = sorted(Positive_Interaction[['DrugA', 'DrugB']].values.tolist())
+        Negitive_Interaction = sorted(Negitive_Interaction[['DrugA', 'DrugB']].values.tolist())
         
-        for Cell_Line, Interaction in Cell_Line_Specific:
-            for idx, (a, b) in Interaction[['DrugA', 'DrugB']].iterrows():
-                Interaction.at[idx, 'DrugA'], Interaction.at[idx, 'DrugB'] = sorted([a, b])
-            Positive_Interaction = Interaction[Interaction.iloc[:,3] >= params.threshold]
-            Negitive_Interaction = Interaction[Interaction.iloc[:,3] < 0]
-            
-            
-            Positive_Interaction = sorted(Positive_Interaction[['DrugA', 'DrugB']].values.tolist())
-            Negitive_Interaction = sorted(Negitive_Interaction[['DrugA', 'DrugB']].values.tolist())
-            
-            random.seed(params.seed)
-            random.shuffle(Positive_Interaction)
-            random.shuffle(Negitive_Interaction)
+        random.seed(params.seed)
+        random.shuffle(Positive_Interaction)
+        random.shuffle(Negitive_Interaction)
+    
+        nSize = len(Positive_Interaction)
+        foldSize = int(nSize / params.k_fold)
+        startTest = iFold * foldSize
+        endTest = (iFold + 1) * foldSize
+        if endTest > nSize:
+            endTest = nSize
+
+        if iFold == params.k_fold - 1:
+            startValid = 0
+        else:
+            startValid = endTest
+
+        endValid = startValid + foldSize
         
-            nSize = len(Positive_Interaction)
-            foldSize = int(nSize / params.k_fold)
-            startTest = iFold * foldSize
-            endTest = (iFold + 1) * foldSize
-            if endTest > nSize:
-                endTest = nSize
-
-            if iFold == params.k_fold - 1:
-                startValid = 0
-            else:
-                startValid = endTest
-
-            endValid = startValid + foldSize
-            
-            test_pos = Positive_Interaction[startTest:endTest]
-            valid_pos = Positive_Interaction[startValid:endValid]
-            
-
-            test_neg = Negitive_Interaction[startTest:endTest]
-            valid_neg = Negitive_Interaction[startValid:endValid]
-            
-            train_pos = [ x for x in Positive_Interaction if x not in test_pos + valid_pos ]
-            train_neg = [ x for x in Negitive_Interaction if x not in test_neg + valid_neg ]
-            
-            Synergistic_Graph.extend([sorted(row + [Cell_Line]) for row in train_pos])
-            Antagonistic_Graph.extend([sorted(row + [Cell_Line]) for row in train_neg])
-            
-            
-            test = np.concatenate([test_pos, test_neg])
-            y_test = [1] * len(test_pos) + [0] * len(test_neg)
-            
-            valid = np.concatenate([valid_pos, valid_neg])
-            y_valid = [1] * len(valid_pos) + [0] * len(valid_neg)
-            
-            train = np.concatenate([train_pos, train_neg])
-            y_train = [1] * len(train_pos) + [0] * len(train_neg)
-            train = np.concatenate([train, [ [x[1],x[0]] for x in train ] ])
-            
-            pos_weight = len(train_neg) / len(train_pos)
-            
-            train_edges[Cell_Line] = train
-            train_labels[Cell_Line] = y_train
-            test_edges[Cell_Line] = test
-            test_labels[Cell_Line] = y_test
-            valid_edges[Cell_Line] = valid
-            valid_labels[Cell_Line] = y_valid
-            pos_weights[Cell_Line] = pos_weight
-        hypergraph2 = Synergistic_Graph + Antagonistic_Graph
+        test_pos = Positive_Interaction[startTest:endTest]
+        valid_pos = Positive_Interaction[startValid:endValid]
         
-        edge_length = [len(Synergistic_Graph), len(Synergistic_Graph + Antagonistic_Graph)]
-        node_num = numDrug + numCellline
 
-        V, E, degV = Construct_Hypergraph(Synergistic_Graph, Antagonistic_Graph, node_num)
+        test_neg = Negitive_Interaction[startTest:endTest]
+        valid_neg = Negitive_Interaction[startValid:endValid]
+        
+        train_pos = [ x for x in Positive_Interaction if x not in test_pos + valid_pos ]
+        train_neg = [ x for x in Negitive_Interaction if x not in test_neg + valid_neg ]
+        
+        Synergistic_Graph.extend([sorted(row + [Cell_Line]) for row in train_pos])
+        Antagonistic_Graph.extend([sorted(row + [Cell_Line]) for row in train_neg])
+        
+        
+        test = np.concatenate([test_pos, test_neg])
+        y_test = [1] * len(test_pos) + [0] * len(test_neg)
+        
+        valid = np.concatenate([valid_pos, valid_neg])
+        y_valid = [1] * len(valid_pos) + [0] * len(valid_neg)
+        
+        train = np.concatenate([train_pos, train_neg])
+        y_train = [1] * len(train_pos) + [0] * len(train_neg)
+        train = np.concatenate([train, [ [x[1],x[0]] for x in train ] ])
+        
+        pos_weight = len(train_neg) / len(train_pos)
+        
+        train_edges[Cell_Line] = train
+        train_labels[Cell_Line] = y_train
+        test_edges[Cell_Line] = test
+        test_labels[Cell_Line] = y_test
+        valid_edges[Cell_Line] = valid
+        valid_labels[Cell_Line] = y_valid
+        pos_weights[Cell_Line] = pos_weight
+    hypergraph2 = Synergistic_Graph + Antagonistic_Graph
+    
+    edge_length = [len(Synergistic_Graph), len(Synergistic_Graph + Antagonistic_Graph)]
+    node_num = numDrug + numCellline
 
-        realFold = RealFoldData(train_edges, train_labels, test_edges, test_labels, valid_edges, valid_labels, pos_weights)
-        realFold.iFold = iFold
-        realFold.CellsCount = numCellline
-        realFold.numDrug = numDrug
-        realFold.numNode = numDrug + numCellline
-        realFold.V = V
-        realFold.E = E
-        realFold.edge_length = edge_length
-        realFold.degV_dict = degV
-        realFold.hypergraph_edge_num = len(hypergraph2)
+    V, E, degV = Construct_Hypergraph(Synergistic_Graph, Antagonistic_Graph, node_num)
 
-        queue.put(realFold)
-        event.set() # Notify consumer that new data is available
+    realFold = RealFoldData(train_edges, train_labels, test_edges, test_labels, valid_edges, valid_labels, pos_weights)
+    realFold.iFold = iFold
+    realFold.CellsCount = numCellline
+    realFold.numDrug = numDrug
+    realFold.numNode = numDrug + numCellline
+    realFold.V = V
+    realFold.E = E
+    realFold.edge_length = edge_length
+    realFold.degV_dict = degV
+    realFold.hypergraph_edge_num = len(hypergraph2)
+
+    return realFold
 
 
-def consumer(queue, counter, realFolds, event):
-    while True:
-        data = queue.get()
-        if data is None:
-            break
-       
-        iFold = data.iFold
-        event.clear()  # Reset event before processing data
-        realFolds[iFold] = data
-        # Update counter
-        with counter.get_lock():
-            counter.value += 1
-            print("Fold: ", iFold, "Total: ", counter.value)
-        event.set()
 
 
 class RealFoldData:
@@ -224,50 +207,11 @@ def train_valid_test_split(Dataset_Name, DrugToID, numDrug):
     numCellline = len(CellLineToID)
     
 
-    # multiprocessing.set_start_method('fork')
-    producers = []
-    consumers = []
-    queue = Queue(params.k_fold + params.n_data_worker)
-    counter = Value('i', 0)
-    
-    # Create a dictionary that can be shared between multiple processes
-    realFolds = Manager().dict()
-
-    foldPerWorker = int(params.k_fold / params.n_data_worker)
-
-    event = multiprocessing.Event()
-
-    for i in range(params.n_data_worker):
-        startFold = i * foldPerWorker
-        endFold = (i + 1) * foldPerWorker
-        endFold = min(endFold, params.k_fold)
-        datums = []
-        for iFold in range(startFold, endFold):
-            data = Interaction_Score, numDrug, numCellline, iFold
-            datums.append(data)
-        producers.append(Process(target=producer, args=(queue, datums, event)))
-
-    for _ in range(params.n_data_worker):
-        p = Process(target=consumer, args=(queue, counter, realFolds, event))
-        p.daemon = True
-        consumers.append(p)
-    print("Start Producers...")
-    for p in producers:
-        p.start()
-    print("Start Consumers...")
-    for p in consumers:
-        p.start()
-
-    for p in producers:
-        p.join()
-    print("Finish Producers")
-    event.wait()  # Wait for all consumer processes to complete.
-    while counter.value < params.k_fold:
-        time.sleep(1)
-        continue
-    for _ in range(params.n_data_worker):
-        queue.put(None)
-    print("Finish Consumers")
+    realFolds = {}
+    for iFold in range(params.k_fold):
+        data = Interaction_Score, numDrug, numCellline, iFold
+        realFolds[iFold] = produce(data)
+        print("Completed fold:", iFold)
 
     return realFolds, Cell_Line_Feature, CellLineToID
 
@@ -369,7 +313,8 @@ def process_data(Dataset_Name):
 
     Protein_Interaction_Double = pd.concat([Protein_Interaction, Protein_Interaction[['Protein_B', 'Protein_A']].rename(columns={'Protein_B': 'Protein_A', 'Protein_A': 'Protein_B'})], axis=0)
     Drug_Interaction_Double = pd.concat([Drug_Interaction, Drug_Interaction[['Drug_B', 'Drug_A']].rename(columns={'Drug_B': 'Drug_A', 'Drug_A': 'Drug_B'})], axis=0)
-      
+    Drug_Target_Double = pd.concat([Drug_Target, Drug_Target[['Target_ID', 'Drug_ID']].rename(columns={'Target_ID': 'Drug_ID', 'Drug_ID': 'Target_ID'})], axis=0)
+
     Hyperedge = M1 + M2 + M3 + M4
       
     numDrug = len(DrugToID)
@@ -394,7 +339,7 @@ def process_data(Dataset_Name):
     Protein_Interaction_Index = Protein_Interaction_Double-len(DrugToID)
     Protein_Adjacency_Matrix = coo_matrix((np.ones(len(Protein_Interaction_Index)), (Protein_Interaction_Index['Protein_A'], Protein_Interaction_Index['Protein_B'])), shape=(len(TargetToID), len(TargetToID)))
     Drug_Adjacency_Matrix = coo_matrix((np.ones(len(Drug_Interaction_Double)), (Drug_Interaction_Double['Drug_A'], Drug_Interaction_Double['Drug_B'])), shape=(len(DrugToID), len(DrugToID)))
-
+    Drug_Target_Matrix = coo_matrix((np.ones(len(Drug_Target_Double)), (Drug_Target_Double['Drug_ID'], Drug_Target_Double['Target_ID'])), shape=(len(DrugToID) + len(TargetToID), len(DrugToID) + len(TargetToID)))
     
     # Drug feature matrix
     Fingerprints = []
@@ -423,7 +368,7 @@ def process_data(Dataset_Name):
     realFolds, Cell_Line_Feature, CellLineToID = train_valid_test_split(Dataset_Name, DrugToID, numDrug)
 
     
-    return realFolds, Protein_Adjacency_Matrix, Drug_Adjacency_Matrix, numNode1, Drug_Features, Cell_Line_Feature, DrugToID, TargetToID, CellLineToID, V1.numpy(), E1.numpy(), edge_num1, edge_length, degV1
+    return realFolds, Protein_Adjacency_Matrix, Drug_Adjacency_Matrix, Drug_Target_Matrix, numNode1, Drug_Features, Cell_Line_Feature, DrugToID, TargetToID, CellLineToID, V1.numpy(), E1.numpy(), edge_num1, edge_length, degV1
     
 
 

@@ -27,7 +27,7 @@ def metrics(labels, predictions, epoch, type):
 
     aupr = average_precision_score(labels, predictions)
 
-    binary_predictions = (np.array(predictions) > 0.5).astype(int)
+    binary_predictions = (np.array(predictions) >= 0.5).astype(int)
 
     binary_labels = np.array(labels).astype(int)
 
@@ -46,7 +46,7 @@ def metrics(labels, predictions, epoch, type):
 def test(edges, labels):
     Model.eval()
     with torch.no_grad():
-        preds, _ = Model(Drug_Features, Cell_Line_Feature, edges)
+        preds, _, = Model(Drug_Features, Cell_Line_Feature, edges)
         loss = 0
         pred = []
         real = []
@@ -61,7 +61,7 @@ def test(edges, labels):
             each_loss = criterion(each_preds, each_labels)
             loss += each_loss
         loss = loss / Data.CellsCount
-    return loss, pred, real  
+    return loss, pred, real 
  
     
     
@@ -91,7 +91,7 @@ def train(Drug_Features, Data, epochs):
 
             loss_train += each_loss
 
-        loss_ssl = args.alpha * SSL_agent.make_loss(protein_embedding)
+        loss_ssl = args.alpha * SSL_agent_protein.make_loss(protein_embedding)
         loss = loss_train / Data.CellsCount + loss_ssl
         optimizer.zero_grad()
         loss.backward()
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     mlflow.log_param("epochs", args.epochs)
 
     
-    realFolds, Protein_Adjacency_Matrix, Drug_Adjacency_Matrix, numNode1, Drug_Features, Cell_Line_Feature, _, _, _, V1, E1, edge_num1, edge_length1, degV1 = Data_Process.process_data(args.dataset)
+    realFolds, Protein_Adjacency_Matrix, Drug_Adjacency_Matrix, Drug_Target_Matrix, numNode1, Drug_Features, Cell_Line_Feature, _, _, _, V1, E1, edge_num1, edge_length1, degV1 = Data_Process.process_data(args.dataset)
     
     
     Drug_Features = torch.tensor(Drug_Features).float().to(args.device)
@@ -160,14 +160,15 @@ if __name__ == '__main__':
 
         Model = Synergy_Models.Synergy(Data.numDrug, 
                                 Synergy_Models.BioEncoder(Drug_Features.shape[1], Cell_Line_Feature.shape[1], Data.CellsCount, numNode1 - Data.numDrug, 512, device = args.device), 
-                                Synergy_Models.RHGNN(V1, E1, edge_num1, edge_length1, degV1, 512, 256, 256, num_edge_types = 4, dropout = 0.4),
+                                Synergy_Models.RHGNN(V1, E1, edge_num1, edge_length1, degV1, 512, 256, 256, num_edge_types = 4, dropout = 0.2),
                                 Synergy_Models.RHGNN(Data.V, Data.E, Data.hypergraph_edge_num, Data.edge_length, Data.degV_dict, 512, 128, 256, num_edge_types = 2, dropout = 0),
                                 Synergy_Models.ChannelAttention(emb_size = 256),
                                 Synergy_Models.BilinearDecoder(feature_dim = 256, numDrug = Data.numDrug, cellscount = Data.CellsCount)).to(args.device)
 
-        SSL_agent = Synergy_Models.EdgeMask(Protein_Adjacency_Matrix, device = args.device, nhid = 256, mask_ratio = 0.6)
+        SSL_agent_protein = Synergy_Models.EdgeMask(Protein_Adjacency_Matrix, device = args.device, nhid = 256, mask_ratio = args.mask_ratio)
 
-        optimizer = torch.optim.Adam(list(Model.parameters()) + list(SSL_agent.linear.parameters()), lr = args.learning_rate, weight_decay = args.weight_decay)
+        optimizer = torch.optim.Adam(list(Model.parameters()) + list(SSL_agent_protein.linear.parameters()), lr = args.learning_rate, weight_decay = args.weight_decay)
+        
 
         mlflow.log_param("num_params", count_parameters(Model))
         best_model_state, best_epoch = train(Drug_Features, Data, args.epochs)
@@ -176,6 +177,7 @@ if __name__ == '__main__':
         
         loss_test, test_pred, test_real = test(Data.test_edges, Data.test_labels)
         test_results = metrics(test_real, test_pred, best_epoch, 'test')
+
         
         results.append(list(test_results))
         
@@ -189,8 +191,10 @@ if __name__ == '__main__':
     results = pd.DataFrame(results).to_numpy()
     print('Mean: ', np.mean(results, axis=0))
     print('Std: ', np.std(results, axis=0))
-    with open("output_MRHGNN_" + args.dataset, "w") as file:
+    with open("output_MRHGNN_" + args.dataset + '.txt', "w") as file:
         for item in results:
             file.write(str(item) + "\n")
+        file.writelines('Mean: '+ str(np.mean(results, axis=0)) + '\n')
+        file.writelines('Std: '+ str(np.std(results, axis=0)) + '\n')
 
       
