@@ -48,3 +48,15 @@ python MRHGNN.py --dataset 'ALMANAC' --threshold 10 --alpha 0.3 --mask_ratio 0.3
 ## Citation
 
 Please kindly cite this paper if you find it useful for your research. Thanks!
+
+```bibtex
+@article{10950093,
+  author={Chen, Mengjie and Zhang, Ming and Yan, Guiying and Wang, Guanghui and Qu, Cunquan},
+  journal={IEEE Transactions on Neural Networks and Learning Systems}, 
+  title={MRHGNN: Enhanced Multimodal Relational Hypergraph Neural Network for Synergistic Drug Combination Forecasting}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={1-13},
+  doi={10.1109/TNNLS.2025.3553385}}
+```
